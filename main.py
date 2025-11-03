@@ -1,4 +1,4 @@
 import streamlit as st
 st.title('나의 첫 웹 서비스 만들기!')
-st.write('안녕하세요! 처음 뵙겠습니다!!")
-         
+st.text_imput('이름을 입력하세요:')
+st.botton('인사말 생성')
