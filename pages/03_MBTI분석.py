@@ -1,121 +1,99 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
-import numpy as np
 
-st.set_page_config(page_title="국가별 MBTI 분석", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="MBTI Country Dashboard", layout="wide")
 
-st.title("🌍 국가별 MBTI 데이터 분석 대시보드")
-st.write("Plotly 기반 인터랙티브 시각화 + 국가 / MBTI 기준 분석 제공")
+st.title("🌏 국가별 MBTI 대시보드")
+st.write("CSV 데이터를 기반으로 국가별 MBTI 비율을 시각화합니다.")
 
-# --------------------------
-# 🔹 데이터 불러오기
-# --------------------------
-@st.cache_data
-def load_data():
-    return pd.read_csv("countriesMBTI_16types.csv")
+uploaded = st.file_uploader("CSV 파일 업로드", type=["csv"])
 
-df = load_data()
+if uploaded:
+    df = pd.read_csv(uploaded)
 
-# --------------------------
-# 🔹 MBTI 컬럼 자동 탐색
-# --------------------------
-MBTI_LIST = [
-    "INTJ", "INTP", "ENTJ", "ENTP",
-    "INFJ", "INFP", "ENFJ", "ENFP",
-    "ISTJ", "ISFJ", "ESTJ", "ESFJ",
-    "ISTP", "ISFP", "ESTP", "ESFP"
-]
+    # MBTI 컬럼 자동 탐색
+    mbti_cols = [c for c in df.columns if c.upper() in [
+        "INTJ","INTP","ENTJ","ENTP",
+        "INFJ","INFP","ENFJ","ENFP",
+        "ISTJ","ISFJ","ESTJ","ESFJ",
+        "ISTP","ISFP","ESTP","ESFP"
+    ]]
 
-mbti_cols = [c for c in MBTI_LIST if c in df.columns]
+    if not mbti_cols:
+        st.error("❌ MBTI 컬럼을 찾을 수 없습니다. CSV 파일의 컬럼명을 확인해주세요.")
+        st.stop()
 
-# --------------------------
-# 🔹 국가 컬럼 자동 탐색
-# --------------------------
-candidate_country_cols = ["Country", "country", "COUNTRY", "국가", "나라"]
-country_col = next((c for c in candidate_country_cols if c in df.columns), None)
+    tab1, tab2 = st.tabs(["📌 국가별 MBTI 비율", "📌 MBTI 유형별 상위 10개 국가"])
 
-if country_col is None:
-    st.error("❌ CSV에서 국가 컬럼을 찾을 수 없습니다.")
-    st.stop()
+    # ----------------------------------------------------------
+    # 📌 TAB 1 — 국가 선택 → 해당 국가 MBTI 비율 시각화
+    # ----------------------------------------------------------
+    with tab1:
+        st.subheader("국가별 MBTI 비율")
 
-# =========================================================
-#                      📌 탭 구성
-# =========================================================
-tab1, tab2 = st.tabs(["국가별 MBTI", "MBTI별 국가 순위"])
+        selected_country = st.selectbox("국가 선택", df["Country"].unique())
 
-# =========================================================
-# 🔹 TAB 1 : 국가 선택 → MBTI 분포 그래프
-# =========================================================
-with tab1:
-    st.subheader("🌎 국가를 선택하면 MBTI 비율을 확인할 수 있어요.")
+        row = df[df["Country"] == selected_country].iloc[0]
+        mbti_data = row[mbti_cols].astype(float)
 
-    country = st.selectbox("국가 선택", sorted(df[country_col].unique()))
+        # 정렬
+        mbti_sorted = mbti_data.sort_values(ascending=False)
+        order = mbti_sorted.index.tolist()
 
-    selected_row = df[df[country_col] == country].iloc[0]
-    values = selected_row[mbti_cols].sort_values(ascending=False)
+        # 색상 지정 (1등 빨강, 이후 파랑 → 연한 파랑 그라데이션)
+        colors = ["red"] + px.colors.sequential.Blues[len(mbti_cols)-1:]
 
-    # Plotly 바차트
-    fig = px.bar(
-        values,
-        x=values.index,
-        y=values.values,
-        text=values.values,
-        color=values.values,
-        color_continuous_scale="Blues",
-    )
+        fig = px.bar(
+            x=mbti_sorted.values,
+            y=mbti_sorted.index,
+            orientation="h",
+            color=range(len(mbti_sorted)),
+            color_continuous_scale=["red"] + px.colors.sequential.Blues,
+        )
 
-    fig.update_traces(textposition="outside")
-    fig.update_layout(
-        title=f"📊 {country}의 MBTI 분포",
-        xaxis_title="MBTI 유형",
-        yaxis_title="값",
-        template="plotly_white",
-        coloraxis_showscale=False
-    )
+        fig.update_layout(
+            xaxis_title="비율",
+            yaxis_title="MBTI 유형",
+            coloraxis_showscale=False
+        )
 
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.dataframe(values.reset_index().rename(columns={"index": "MBTI", 0: "Value"}))
+    # ----------------------------------------------------------
+    # 📌 TAB 2 — MBTI 유형 선택 → 비율 높은 국가 Top 10
+    # ----------------------------------------------------------
+    with tab2:
+        st.subheader("MBTI 유형별 상위 10개 국가")
 
-# =========================================================
-# 🔹 TAB 2 : MBTI 선택 → 상위 10개 국가 그래프
-# =========================================================
-with tab2:
-    st.subheader("📌 MBTI 유형을 선택하면 상위 10개 국가를 보여줍니다")
-    selected_mbti = st.selectbox("MBTI 선택", mbti_cols)
+        selected_mbti = st.selectbox("MBTI 유형 선택", mbti_cols)
 
-    # MBTI 기준 상위 10개 국가
-    ranking = df[[country_col, selected_mbti]].sort_values(selected_mbti, ascending=False).head(10)
+        top10 = df[["Country", selected_mbti]].copy()
+        top10 = top10.sort_values(selected_mbti, ascending=False).head(10)
 
-    # 색상 지정 (한국은 보라색)
-    colors = []
-    for c in ranking[country_col]:
-        if c in ["South Korea", "Korea", "Republic of Korea", "대한민국"]:
-            colors.append("purple")
-        else:
-            colors.append("rgba(0, 80, 255, 0.7)")
+        # 색상: 대한민국 = 보라색, 나머지 파랑
+        bar_colors = []
+        for country in top10["Country"]:
+            if isinstance(country, str) and "korea" in country.lower():
+                bar_colors.append("purple")   # 대한민국만 보라색
+            else:
+                bar_colors.append("steelblue")
 
-    # Plotly 그래프
-    fig2 = go.Figure()
+        fig2 = px.bar(
+            top10,
+            x="Country",
+            y=selected_mbti,
+            color=bar_colors,
+            color_discrete_sequence=bar_colors
+        )
 
-    fig2.add_trace(go.Bar(
-        x=ranking[country_col],
-        y=ranking[selected_mbti],
-        marker=dict(color=colors),
-        text=ranking[selected_mbti],
-        textposition="outside"
-    ))
+        fig2.update_layout(
+            xaxis_title="국가",
+            yaxis_title=f"{selected_mbti} 비율",
+            showlegend=False
+        )
 
-    fig2.update_layout(
-        title=f"🏆 {selected_mbti} 비율이 높은 국가 Top 10",
-        xaxis_title="국가",
-        yaxis_title="값",
-        template="plotly_white",
-        height=600
-    )
+        st.plotly_chart(fig2, use_container_width=True)
 
-    st.plotly_chart(fig2, use_container_width=True)
-
-    st.dataframe(ranking.reset_index(drop=True))
+else:
+    st.info("CSV 파일을 업로드해주세요!")
