@@ -6,7 +6,7 @@ import numpy as np
 st.set_page_config(page_title="국가별 MBTI 분석", page_icon="🌍", layout="wide")
 
 st.title("🌍 국가별 MBTI 비율 분석 대시보드")
-st.write("CSV 파일을 기반으로 국가별 MBTI 분포를 인터랙티브 그래프로 살펴보세요!")
+st.write("각 국가별 MBTI 분포를 인터랙티브 그래프로 확인해보세요!")
 
 # --------------------------
 # 🔹 데이터 불러오기
@@ -18,16 +18,21 @@ def load_data():
 
 df = load_data()
 
-# MBTI 컬럼 자동 탐색
-candidate_mbti_cols = ["MBTI", "mbti", "type", "Type", "Personality", "personality"]
-mbti_col = None
-for c in candidate_mbti_cols:
-    if c in df.columns:
-        mbti_col = c
-        break
+# --------------------------
+# 🔹 MBTI 16개 컬럼 자동 탐색
+# --------------------------
+MBTI_TYPES = [
+    "INTJ", "INTP", "ENTJ", "ENTP",
+    "INFJ", "INFP", "ENFJ", "ENFP",
+    "ISTJ", "ISFJ", "ESTJ", "ESFJ",
+    "ISTP", "ISFP", "ESTP", "ESFP"
+]
 
-if mbti_col is None:
-    st.error("❌ MBTI 컬럼을 찾을 수 없습니다. CSV 파일의 MBTI 컬럼명을 확인해주세요.")
+# 실제 CSV에 존재하는 MBTI 열만 사용
+mbti_cols = [c for c in MBTI_TYPES if c in df.columns]
+
+if len(mbti_cols) == 0:
+    st.error("❌ CSV 파일 안에서 MBTI 타입 컬럼(예: ENFP, INTJ 등)을 찾을 수 없습니다.")
     st.stop()
 
 # 국가 컬럼 자동 탐색
@@ -49,48 +54,51 @@ country_list = sorted(df[country_col].dropna().unique())
 selected_country = st.selectbox("국가 선택", country_list)
 
 # --------------------------
-# 🔹 선택된 국가 데이터 처리
+# 🔹 선택 국가의 MBTI 값 추출
 # --------------------------
-filtered = df[df[country_col] == selected_country]
+row = df[df[country_col] == selected_country].iloc[0]
 
-mbti_counts = filtered[mbti_col].value_counts().sort_values(ascending=False)
-mbti_percent = (mbti_counts / mbti_counts.sum() * 100).round(2)
+values = row[mbti_cols]
+
+# MBTI 값 정렬 (내림차순)
+sorted_values = values.sort_values(ascending=False)
 
 # --------------------------
-# 🔹 색상 만들기 (등수 기반)
-#   1등 = 빨강
-#   2~16등 = 파랑 → 옅은 파랑 그라데이션
+# 🔹 색상 설정
+#    1등 = 빨강
+#    2등~16등 = 파랑 → 옅은 파랑 그라데이션
 # --------------------------
+
 colors = []
 
-# 1등 색
+# 1등 빨강
 colors.append("red")
 
-# 파랑계열 그라데이션 (Hex 조절)
+# 파랑 → 흐린 파랑 그라데이션 생성
 def blue_gradient(n):
-    base = np.linspace(255, 100, n).astype(int)
+    base = np.linspace(255, 120, n).astype(int)
     return [f"rgb(0,0,{v})" for v in base]
 
-grads = blue_gradient(len(mbti_percent) - 1)
-colors.extend(grads)
+blue_grad = blue_gradient(len(sorted_values) - 1)
+colors.extend(blue_grad)
 
 # --------------------------
-# 🔹 Plotly 그래프 그리기
+# 🔹 Plotly 막대그래프
 # --------------------------
 fig = go.Figure()
 
 fig.add_trace(go.Bar(
-    x=mbti_percent.index,
-    y=mbti_percent.values,
+    x=sorted_values.index,
+    y=sorted_values.values,
     marker=dict(color=colors),
-    text=[f"{v}%" for v in mbti_percent.values],
+    text=[f"{v}" for v in sorted_values.values],
     textposition="outside"
 ))
 
 fig.update_layout(
     title=f"🇨🇦 {selected_country} MBTI 비율",
     xaxis_title="MBTI 유형",
-    yaxis_title="비율 (%)",
+    yaxis_title="값",
     template="plotly_white",
     height=600
 )
@@ -98,7 +106,7 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------
-# 🔹 데이터 테이블도 제공
+# 🔹 데이터 테이블
 # --------------------------
 st.subheader(f"📊 {selected_country} MBTI 데이터")
-st.dataframe(mbti_percent.reset_index().rename(columns={"index": "MBTI", 0: "Percent"}))
+st.dataframe(sorted_values.reset_index().rename(columns={"index": "MBTI", 0: "Value"}))
