@@ -1,14 +1,7 @@
 streamlit
 pandas
 plotly
-
-
-
-
-
-
-
-
+numpy
 
 
 
