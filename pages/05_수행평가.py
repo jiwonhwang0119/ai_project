@@ -1,160 +1,198 @@
-# 파일 1 — pages/mbti_analysis.py
+# Streamlit page: 지진 대피소 비율 시각화 (pages/earthquake_shelters.py)
+# ---------------------------------------------------------------
+# 이 파일은 Streamlit Cloud의 `pages` 폴더 아래에 위치하도록 만들어졌습니다.
+# 아래의 주석 블록은 requirements.txt 내용과 간단한 사용법을 포함합니다.
+# ----------------- requirements.txt (copy this into requirements.txt) -----------------
+# streamlit
+# pandas
+# plotly
+# numpy
+# ----------------- end requirements.txt ---------------------------------------------
 
-```python
-# pages/mbti_analysis.py
-# Streamlit page that inspects the provided CSV (located at project root)
-# and draws a Plotly bar chart of MBTI-like distributions by country (or a chosen categorical column).
+# 사용법:
+# 1) 프로젝트 루트: CSV 파일은 루트에 'earthquake shelter.csv'로 둡니다. (업로드된 경우 '/mnt/data/earthquake shelter.csv' 경로도 자동으로 감지)
+# 2) Streamlit Cloud에 배포하면 이 파일은 pages/ 아래에 있으므로 자동으로 사이드바에서 페이지로 표시됩니다.
+# 3) 필요시 컬럼명이 다르면 앱의 자동 컬럼 감지 로직이 시도합니다.
 
+import os
+import math
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from pathlib import Path
 
-st.set_page_config(page_title="MBTI / 카테고리 분포 분석", layout="wide")
+st.set_page_config(page_title="지진 대피소 비율", layout="wide")
 
-st.title("MBTI 비율 분석 — (혹은 대체 카테고리)")
-st.write("이 페이지는 루트 폴더의 CSV 파일을 읽어 국가(혹은 시도/국가 수준)별로 MBTI 분포(또는 사용자가 고른 범주)의 비율을 막대그래프로 보여줍니다.")
+st.title("자치구별 지진 대피소 비율")
+st.markdown("데이터 파일: `earthquake shelter.csv` (루트 폴더) — 업로드된 환경에서는 `/mnt/data/earthquake shelter.csv` 도 자동 감지됩니다.")
 
-# 기본 파일 경로: pages 폴더 아래에서 실행되므로 ../ 로 루트로 올라갑니다.
-default_path = Path(__file__).parent.parent / "earthquake shelter.csv"
+# CSV 경로 탐색: 우선 루트에 있는 파일명, 그렇지 않으면 업로드된 경로를 사용
+candidate_paths = [
+    "earthquake shelter.csv",
+    "earthquake_shelter.csv",
+    "./earthquake shelter.csv",
+    "/mnt/data/earthquake shelter.csv",
+    "/mnt/data/earthquake_shelter.csv"
+]
 
-uploaded = st.file_uploader("원본 CSV 파일 업로드 (선택) — 업로드하면 기본 파일 대신 사용됩니다", type=['csv'])
-use_default = False = False
-if uploaded is None:
-    if default_path.exists():
-        try:
-            df = pd.read_csv(default_path, encoding='cp949')
-            use_default = True
-        except Exception:
-            df = pd.read_csv(default_path, encoding='utf-8', errors='replace')
-    else:
-        st.error("기본 CSV 파일을 찾을 수 없습니다. 왼쪽의 업로더로 CSV 파일을 업로드해주세요.")
-        st.stop()
-else:
-    df = pd.read_csv(uploaded)
+csv_path = None
+for p in candidate_paths:
+    if os.path.exists(p):
+        csv_path = p
+        break
 
-st.subheader("데이터 샘플")
-st.dataframe(df.head(10))
-
-# Detect candidate country-like and categorical columns
-cand_country = []
-for c in df.columns:
-    cl = c.lower()
-    if any(k in cl for k in ['country','nation','국가','시도','도','시도명','country_name']):
-        cand_country.append(c)
-
-# fallback: columns with small number of unique values and object dtype
-if not cand_country:
-    for c in df.columns:
-        if df[c].dtype == object and df[c].nunique() < 500:
-            cand_country.append(c)
-
-st.sidebar.header("설정")
-country_col = st.sidebar.selectbox("국가/지역(또는 집계 단위) 컬럼 선택", options=cand_country if cand_country else list(df.columns), index=0 if cand_country else 0)
-
-# Detect MBTI-like column
-mbti_candidates = [c for c in df.columns if c.lower() in ('mbti','mbti_type','mbti type','personality','type')]
-# heuristic: find columns with many 4-letter MBTI codes
-if not mbti_candidates:
-    for c in df.select_dtypes(include=['object']).columns:
-        sample = df[c].dropna().astype(str).head(500)
-        if len(sample) > 0:
-            score = sample.str.match(r'^[EI][NS][TF][JP]$').mean()
-            if score > 0.15:
-                mbti_candidates.append(c)
-
-st.sidebar.subheader("MBTI(혹은 분류) 컬럼 설정")
-if mbti_candidates:
-    mbti_col = st.sidebar.selectbox("MBTI(또는 항목) 컬럼 선택", options=mbti_candidates, index=0)
-else:
-    st.sidebar.write("MBTI 유사 컬럼을 자동으로 찾지 못했습니다.")
-    mbti_col = st.sidebar.selectbox("대체로 사용할 범주형 컬럼을 직접 선택하세요", options=[c for c in df.columns if df[c].nunique() < 200])
-
-st.sidebar.write("")
-
-# group and compute percentages
-if mbti_col not in df.columns or country_col not in df.columns:
-    st.error("선택한 컬럼을 데이터에서 찾을 수 없습니다. 설정을 확인하세요.")
+if csv_path is None:
+    st.error("CSV 파일을 찾을 수 없습니다. 루트 폴더에 'earthquake shelter.csv' 파일을 올려주세요.")
     st.stop()
 
-agg = pd.crosstab(df[country_col], df[mbti_col])
-agg_pct = (agg.div(agg.sum(axis=1), axis=0) * 100).round(2)
+# 데이터 읽기
+try:
+    df = pd.read_csv(csv_path)
+except Exception as e:
+    st.error(f"CSV 파일을 읽는 중 오류가 발생했습니다: {e}")
+    st.stop()
 
-# country selector
-country_list = agg_pct.index.tolist()
-sel_country = st.selectbox("국가/지역 선택", options=country_list)
+st.sidebar.header("설정")
+# 자동 컬럼 감지: 자치구 이름이 담긴 컬럼 후보
+district_candidates = [
+    '자치구', '구', 'SIG_KOR_NM', '도시', 'district', 'district_name', '지역', 'GU', 'gu'
+]
 
-# prepare data for plotting
-plot_df = agg_pct.loc[sel_country].reset_index()
-plot_df.columns = [mbti_col, 'percent']
-plot_df = plot_df.sort_values('percent', ascending=False).reset_index(drop=True)
+found_district_col = None
+for c in district_candidates:
+    if c in df.columns:
+        found_district_col = c
+        break
 
-# build colors: top = red, others = gradient
-n = len(plot_df)
-# get a sequential colorscale for others
-colorscale = px.colors.sequential.Plasma
-# generate gradient (avoid specifying exact color map name if you want to tweak)
-# map others to a gradient, but ensure top is red
-other_colors = []
-if n > 1:
-    # sample colors from the colorscale
-    steps = max(n-1, 1)
-    palette = px.colors.sample_colorscale(colorscale, [i/(steps-1) if steps>1 else 0.5 for i in range(steps)])
-    other_colors = palette
+# 만약 자동으로 못찾으면 사용자가 선택하게 함
+if found_district_col is None:
+    st.sidebar.warning("자치구(구) 컬럼을 자동으로 찾지 못했습니다. 아래에서 컬럼을 선택하세요.")
+    found_district_col = st.sidebar.selectbox("자치구 컬럼 선택", options=df.columns)
 else:
-    other_colors = []
+    st.sidebar.info(f"자치구 컬럼 자동 선택: `{found_district_col}`")
 
-colors = []
-for i in range(n):
-    if i == 0:
-        colors.append('red')
+# 선택 가능한 상호작용: 상위 N개 보기, 정렬 방식
+top_n = st.sidebar.number_input("상위 N개 표시 (0 = 전체)", min_value=0, max_value=1000, value=0, step=1)
+show_percent = st.sidebar.checkbox("비율(%) 표시", value=True)
+
+# 전처리: 결측값 제거 및 문자열 정리
+df = df.copy()
+# 문자열로 변환 및 strip
+df[found_district_col] = df[found_district_col].astype(str).str.strip()
+# 그룹 집계
+group = df.groupby(found_district_col).size().reset_index(name='count')
+# total shelters
+total = group['count'].sum()
+if total == 0:
+    st.error("데이터에 대피소 수가 0입니다. 데이터 내용을 확인해주세요.")
+    st.stop()
+
+group['percent'] = group['count'] / total * 100
+# 정렬(내림차순)
+group = group.sort_values(by='count', ascending=False).reset_index(drop=True)
+# 순위
+group['rank'] = group.index + 1
+
+# top_n 처리
+if top_n > 0 and top_n < len(group):
+    display_df = group.head(top_n).copy()
+else:
+    display_df = group.copy()
+
+# 색상 지정: 1등은 빨간색, 나머지는 그라데이션
+# 1등: 강한 빨강
+first_color = '#e63946'  # red
+# 나머지를 위한 블루-그라데이션 사용 (연속형) — 2등부터 끝까지
+num_other = len(display_df) - 1
+# gradient 색상 리스트 생성 (viridis나 blues 계열을 사용)
+if num_other > 0:
+    # px.colors.sequential 등에서 중간색들을 뽑아 사용
+    palette = px.colors.sequential.Blues
+    # palette 길이와 필요 길이가 다를 수 있으므로 보간
+    def interpolate_palette(palette, n):
+        # palette: list of hex
+        # return n colors interpolated evenly from palette
+        import colorsys
+        # convert hex to rgb
+        def hex_to_rgb(h):
+            h = h.lstrip('#')
+            return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+        def rgb_to_hex(rgb):
+            return '#%02x%02x%02x' % rgb
+        base_rgbs = [hex_to_rgb(h) for h in palette]
+        # linear interpolate across base_rgbs
+        result = []
+        for i in range(n):
+            t = i / max(n-1, 1)
+            # find position in base palette
+            pos = t * (len(base_rgbs)-1)
+            i0 = int(math.floor(pos))
+            i1 = int(math.ceil(pos))
+            local_t = pos - i0
+            r = round((1-local_t)*base_rgbs[i0][0] + local_t*base_rgbs[i1][0])
+            g = round((1-local_t)*base_rgbs[i0][1] + local_t*base_rgbs[i1][1])
+            b = round((1-local_t)*base_rgbs[i0][2] + local_t*base_rgbs[i1][2])
+            result.append(rgb_to_hex((r,g,b)))
+        return result
+
+    other_colors = interpolate_palette(palette, num_other)
+    colors = [first_color] + other_colors
+else:
+    colors = [first_color]
+
+# display_df에 대해 colors만들기 — 만약 top_n < 전체이고 1등이 잘려나갔으면 순위 기준으로 색 적용
+# Map colors by rank position in display_df
+colors_mapped = []
+for idx, row in display_df.reset_index().iterrows():
+    if row['rank'] == 1:
+        colors_mapped.append(first_color)
     else:
-        colors.append(other_colors[i-1])
+        # pick color according to position among others
+        # position among others: (rank-2) -> 0-based
+        if num_other > 0:
+            pos = min(max(int(idx-1), 0), max(num_other-1,0))
+            colors_mapped.append(other_colors[pos])
+        else:
+            colors_mapped.append('#bbbbbb')
 
-# Plotly bar
-fig = go.Figure(go.Bar(
-    x=plot_df['percent'],
-    y=plot_df[mbti_col].astype(str),
-    orientation='h',
-    marker=dict(color=colors),
-    hovertemplate='%{y}: %{x}%<extra></extra>'
+# 그래프 그리기
+fig = go.Figure()
+fig.add_trace(go.Bar(
+    x=display_df[found_district_col],
+    y=display_df['percent'] if show_percent else display_df['count'],
+    marker_color=colors_mapped,
+    text=[f"{c:.1f}%" if show_percent else str(int(c)) for c in display_df['percent'] if show_percent] if show_percent else None,
+    hovertemplate=(
+        f"<b>%{{x}}</b><br>"
+        + ("대피소 수: %{customdata[0]}<br>비율: %{customdata[1]:.2f}%<extra></extra>" if show_percent else "대피소 수: %{customdata[0]}<extra></extra>")
+    ),
+    customdata=np.stack((display_df['count'], display_df['percent']), axis=-1),
 ))
-fig.update_layout(title=f"{sel_country} — {mbti_col} 비율 (상위: 빨간색)", xaxis_title='Percent (%)', yaxis={'categoryorder':'total ascending'}, height=600)
+
+y_title = '비율 (%)' if show_percent else '대피소 수'
+fig.update_layout(
+    title={'text': '자치구별 지진 대피소 비율', 'x':0.5},
+    xaxis_title='자치구',
+    yaxis_title=y_title,
+    template='plotly_white',
+    hovermode='closest',
+    margin=dict(l=40, r=40, t=80, b=120)
+)
+
+# x축 라벨 각도를 자동으로 조정
+fig.update_xaxes(tickangle=-45, tickfont=dict(size=11))
 
 st.plotly_chart(fig, use_container_width=True)
 
+# 표 형태로 결과 보기
+with st.expander("상세 데이터 보기"):
+    show_table = display_df.copy()
+    show_table['percent'] = show_table['percent'].round(2)
+    show_table = show_table.rename(columns={found_district_col: '자치구', 'count': '대피소 수', 'percent': '비율(%)', 'rank':'순위'})
+    st.dataframe(show_table.reset_index(drop=True))
+
 st.markdown("---")
-st.subheader("데이터 요약(자동 생성)")
-col1, col2 = st.columns(2)
-with col1:
-    st.write(f"행 개수: {df.shape[0]}")
-    st.write(f"열 개수: {df.shape[1]}")
-    st.write("결측값 요약:")
-    st.dataframe(df.isna().sum().to_frame('missing_count'))
-with col2:
-    st.write("각 컬럼의 고유값 개수 (상위 20) :")
-    st.dataframe(pd.Series({c: df[c].nunique(dropna=False) for c in df.columns}).sort_values(ascending=False).head(20).to_frame('n_unique'))
+st.caption(f"데이터 소스: `{csv_path}` — 총 대피소 수: {total}")
 
-st.caption("참고: 업로드된 데이터에 실제 MBTI 컬럼이 없으면, 사용자가 선택한 범주형 컬럼을 MBTI처럼 사용해 시각화합니다.")
-```
-
----
-
-# 파일 2 — requirements.txt
-
-```
-streamlit>=1.22
-pandas>=1.5
-plotly>=5.0
-```
-
----
-
-# 사용 방법 (간단 안내)
-
-1. 프로젝트 루트에 `earthquake shelter.csv` 파일을 둡니다. (사용자가 이미 업로드한 경우 문제없음)
-2. `pages/mbti_analysis.py` 파일을 그대로 `pages` 폴더에 넣습니다.
-3. `requirements.txt` 를 루트에 넣고 Streamlit Cloud에 배포하세요.
-
-**참고**: 업로드된 CSV에 실제 MBTI 컬럼이 없을 경우(예: 현재 제공된 파일은 재난대피소 관련 데이터로 보입니다), 페이지는 자동으로 범주형 컬럼을 선택해 시각화할 수 있도록 설계되어 있습니다. 원하시면 MBTI가 포함된 CSV를 새로 업로드하거나, 어떤 컬럼을 MBTI 대체로 사용하고 싶은지 알려주시면 그에 맞춰 코드 수정해드릴게요.
+# 끝
